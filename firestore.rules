@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() && getUserData().role == role;
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isGuruBK() {
+      return hasRole('guru_bk');
+    }
+
+    function isKepalaSekolah() {
+      return hasRole('kepala_sekolah');
+    }
+
+    function isSiswa() {
+      return hasRole('siswa');
+    }
+
+    function isStaff() {
+      return isAdmin() || isGuruBK() || isKepalaSekolah();
+    }
+
+    // 1. Settings
+    // Inisialisasi awal diizinkan sebelum settings/init dibuat
+    match /settings/init {
+      allow read: if true;
+      allow create: if !exists(/databases/$(database)/documents/settings/init);
+      allow update, delete: if false; // Dikunci permanen
+    }
+
+    match /settings/weights {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    // 2. Index Login (identitas -> email, role)
+    // Diizinkan membaca dokumen spesifik untuk alur login identitas (get saja, tidak boleh list)
+    match /loginIndex/{identitas} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow write: if isAdmin() || !exists(/databases/$(database)/documents/settings/init);
+    }
+
+    // 3. Koleksi Pengguna (users/{uid})
+    match /users/{userId} {
+      // User boleh membaca profil sendiri; Admin boleh baca semua; Guru BK & Kepsek boleh membaca
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isStaff());
+      // Admin boleh membuat/mengubah user; Setup awal diizinkan saat settings/init belum ada
+      allow write: if isAdmin() || !exists(/databases/$(database)/documents/settings/init);
+    }
+
+    // 4. Data Siswa (students/{studentId})
+    match /students/{studentId} {
+      // Admin tulis; Guru BK & Kepala Sekolah baca; Siswa hanya membaca data dirinya
+      allow read: if isStaff() || (isSiswa() && getUserData().studentId == studentId);
+      allow write: if isAdmin();
+    }
+
+    // 5. Data Kehadiran (attendance/{attId})
+    match /attendance/{attId} {
+      // Admin tulis; Guru BK & Kepala Sekolah baca; Siswa hanya membaca miliknya
+      allow read: if isStaff() || (isSiswa() && getUserData().studentId == resource.data.studentId);
+      allow write: if isAdmin();
+    }
+
+    // 6. Data Nilai Akademik (grades/{gradeId})
+    match /grades/{gradeId} {
+      // Admin tulis; Guru BK & Kepala Sekolah baca; Siswa hanya membaca miliknya
+      allow read: if isStaff() || (isSiswa() && getUserData().studentId == resource.data.studentId);
+      allow write: if isAdmin();
+    }
+
+    // 7. Catatan Perilaku & Kedisiplinan (behaviors/{behId})
+    match /behaviors/{behId} {
+      // Admin dan Guru BK boleh menulis; Kepsek baca; Siswa hanya membaca miliknya
+      allow read: if isStaff() || (isSiswa() && getUserData().studentId == resource.data.studentId);
+      allow create, update: if isAdmin() || isGuruBK();
+      allow delete: if isAdmin();
+    }
+
+    // 8. Prediksi Risiko DSS (predictions/{predId})
+    // PENTING: SISWA DILARANG KERAS MEMBACA UNTUK MENCEGAH STIGMA SOSIAL
+    match /predictions/{predId} {
+      allow read: if isStaff();
+      allow write: if isGuruBK() || isAdmin();
+      // Siswa tidak memiliki izin (deny)
+    }
+
+    // 9. Tindak Lanjut & Intervensi (interventions/{intId})
+    // PENTING: SISWA DILARANG KERAS MEMBACA
+    match /interventions/{intId} {
+      allow read: if isStaff();
+      allow write: if isGuruBK() || isAdmin();
+    }
+
+    // 10. Pesan Konseling Siswa (messages/{msgId})
+    match /messages/{msgId} {
+      // Guru BK tulis; Siswa penerima boleh baca dan hanya boleh mengubah status 'dibaca'
+      allow create: if isGuruBK() || isAdmin();
+      allow read: if isStaff() || (isSiswa() && getUserData().studentId == resource.data.studentId);
+      allow update: if (isSiswa() && getUserData().studentId == resource.data.studentId && 
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dibaca'])) ||
+                       isGuruBK() || isAdmin();
+      allow delete: if isAdmin() || isGuruBK();
+    }
+  }
+}

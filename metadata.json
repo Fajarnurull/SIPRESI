@@ -1,0 +1,6 @@
+{
+  "name": "SIPRESI – Sistem Prediksi Risiko Putus Sekolah",
+  "description": "Decision Support System (DSS) prediksi risiko putus sekolah siswa SMP Negeri 2 Wanadadi berbasis kehadiran, nilai, dan perilaku dengan rekomendasi tindak lanjut.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
